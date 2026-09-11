@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  html, body { height: 100%; }
+  body {
+    font-family: 'Google Sans', Arial, sans-serif; font-size: 13px; color: #202124;
+    margin: 0; padding: 0; display: flex; flex-direction: column;
+  }
+  header { padding: 14px 16px 10px; border-bottom: 1px solid #e0e0e0; }
+  .banner { border-radius: 6px; padding: 8px 10px; font-weight: 600; margin-bottom: 10px; }
+  .banner.test { background: #e6f4ea; color: #137333; }
+  .banner.live { background: #fce8e6; color: #c5221f; }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 12px; color: #5f6368; }
+  .facts b { color: #202124; font-weight: 600; }
+  .warn { background: #fef7e0; border: 1px solid #f9ab00; border-radius: 6px;
+          padding: 8px 10px; margin-top: 10px; font-size: 12px; }
+  .err { background: #fce8e6; border: 1px solid #c5221f; border-radius: 6px;
+         padding: 10px; margin: 10px 16px; font-size: 12px; white-space: pre-wrap; }
+  .ok { background: #e6f4ea; border: 1px solid #137333; border-radius: 6px;
+        padding: 10px; margin: 10px 16px; font-size: 12px; white-space: pre-wrap; }
+
+  .envelope { padding: 10px 16px 0; font-size: 12px; }
+  .envelope div { padding: 2px 0; }
+  .envelope span.k { display: inline-block; width: 62px; color: #5f6368; }
+
+  .messageWrap {
+    flex: 1; min-height: 200px; margin: 8px 16px 0;
+    border: 1px solid #dadce0; border-radius: 6px; overflow: hidden; background: #fff;
+  }
+  iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+  footer {
+    padding: 12px 16px; border-top: 1px solid #e0e0e0;
+    display: flex; align-items: center; gap: 10px;
+  }
+  footer .spacer { flex: 1; font-size: 12px; color: #5f6368; }
+  button { padding: 9px 16px; border: none; border-radius: 6px;
+           font-weight: 600; font-size: 13px; cursor: pointer; }
+  button.primary { background: #1a73e8; color: #fff; }
+  button.primary:hover { background: #1765cc; }
+  button.danger { background: #c5221f; color: #fff; }
+  button.danger:hover { background: #a50e0e; }
+  button.secondary { background: #f1f3f4; color: #202124; }
+  button.secondary:hover { background: #e8eaed; }
+  button:disabled { background: #dadce0; color: #9aa0a6; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<div id="payload" style="display:none"><?= payload ?></div>
+
+<header>
+  <div id="banner" class="banner"></div>
+  <div class="facts" id="facts"></div>
+  <div id="held"></div>
+</header>
+
+<div class="envelope">
+  <div><span class="k">To</span><b id="to"></b> <span id="intended" style="color:#5f6368"></span></div>
+  <div><span class="k">Subject</span><b id="subject"></b></div>
+</div>
+
+<div class="messageWrap"><iframe id="msg" sandbox=""></iframe></div>
+
+<div id="result"></div>
+
+<footer>
+  <span class="spacer" id="foot">This is the first message in the batch, exactly as it will arrive.</span>
+  <button id="cancel" class="secondary" onclick="google.script.host.close()">Cancel</button>
+  <button id="send" class="primary" onclick="doSend()">Send</button>
+</footer>
+
+<script>
+  var P = JSON.parse(document.getElementById('payload').textContent);
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+    });
+  }
+
+  (function init() {
+    var live = P.mode === 'LIVE';
+    var b = document.getElementById('banner');
+    b.className = 'banner ' + (live ? 'live' : 'test');
+    b.textContent = live
+      ? 'LIVE — ' + P.sendCount + ' real prospect(s) will receive this'
+      : 'TEST — everything goes to your test address';
+
+    document.getElementById('facts').innerHTML =
+      '<span>Stage <b>' + P.stage + '</b></span>' +
+      '<span>Template <b>' + esc(P.templateName) + '</b></span>' +
+      '<span>Sending <b>' + P.sendCount + '</b></span>' +
+      '<span>Skipping <b>' + P.skipCount + '</b></span>';
+
+    if (P.heldBack) {
+      document.getElementById('held').innerHTML =
+        '<div class="warn">Held back by ' + esc(P.heldReason) + ': ' + P.heldBack +
+        '. These stay in the queue for the next run.</div>';
+    }
+
+    document.getElementById('to').textContent = P.firstRecipient;
+    if (P.mode === 'TEST') {
+      document.getElementById('intended').textContent = '(instead of ' + P.firstIntended + ')';
+    }
+    document.getElementById('subject').textContent = P.firstSubject;
+
+    document.getElementById('msg').srcdoc = P.previewHtml;
+
+    var send = document.getElementById('send');
+    send.className = live ? 'danger' : 'primary';
+    send.textContent = live
+      ? 'Send ' + P.sendCount + ' real email' + (P.sendCount === 1 ? '' : 's')
+      : 'Send ' + P.sendCount + ' test email' + (P.sendCount === 1 ? '' : 's');
+  })();
+
+  function doSend() {
+    document.getElementById('send').disabled = true;
+    document.getElementById('cancel').disabled = true;
+    document.getElementById('foot').textContent = 'Sending. Leave this window open until it finishes.';
+    google.script.run
+      .withSuccessHandler(onSent)
+      .withFailureHandler(onFailed)
+      .executeConfirmedSend(P.stage, P.fingerprint);
+  }
+
+  function onSent(r) {
+    document.getElementById('result').innerHTML =
+      '<div class="ok">' + esc(r.summary) + '</div>';
+    document.getElementById('foot').textContent = 'Finished.';
+    var cancel = document.getElementById('cancel');
+    cancel.disabled = false;
+    cancel.textContent = 'Close';
+    cancel.className = 'primary';
+    document.getElementById('send').style.display = 'none';
+  }
+
+  function onFailed(err) {
+    document.getElementById('result').innerHTML =
+      '<div class="err">' + esc(err && err.message ? err.message : err) + '</div>';
+    document.getElementById('foot').textContent = 'Nothing was sent.';
+    document.getElementById('cancel').disabled = false;
+    document.getElementById('send').disabled = false;
+  }
+</script>
+</body>
+</html>

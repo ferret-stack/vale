@@ -1,0 +1,188 @@
+<style>
+  body { font-family: 'Google Sans', Arial, sans-serif; font-size: 13px; color: #202124; margin: 0; padding: 12px; }
+  h2 { font-size: 14px; margin: 0 0 4px; }
+  .muted { color: #5f6368; font-size: 12px; }
+  .banner { border-radius: 6px; padding: 8px 10px; margin: 10px 0; font-weight: 600; }
+  .banner.test { background: #e6f4ea; color: #137333; }
+  .banner.live { background: #fce8e6; color: #c5221f; }
+  .statRow { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+  .warnBox { background: #fef7e0; border: 1px solid #f9ab00; border-radius: 6px; padding: 8px; margin-top: 8px; font-size: 12px; }
+  .errBox { background: #fce8e6; border: 1px solid #c5221f; border-radius: 6px; padding: 8px; margin-top: 8px; font-size: 12px; }
+  .okBox { background: #e6f4ea; border: 1px solid #137333; border-radius: 6px; padding: 8px; margin-top: 8px; font-size: 12px; }
+  ul { margin: 6px 0 0 0; padding-left: 18px; }
+  li { margin-bottom: 3px; }
+  section { border-top: 1px solid #e0e0e0; padding-top: 12px; margin-top: 12px; }
+  label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  select { width: 100%; padding: 6px; margin-bottom: 10px; }
+  button { width: 100%; padding: 9px; border: none; border-radius: 6px; background: #1a73e8; color: white; font-weight: 600; cursor: pointer; font-size: 13px; }
+  button:hover { background: #1765cc; }
+  button.danger { background: #c5221f; }
+  button.danger:hover { background: #a50e0e; }
+  button.secondary { background: #f1f3f4; color: #202124; }
+  button.secondary:hover { background: #e8eaed; }
+  button:disabled { background: #dadce0; color: #9aa0a6; cursor: not-allowed; }
+  .result { margin-top: 8px; }
+  .spinner { display: inline-block; }
+</style>
+
+<h2>Outreach — Send Panel</h2>
+<div class="muted">Select rows on Prospects, then use the buttons below. No need to touch the Outreach menu.</div>
+
+<div id="status">Loading…</div>
+
+<section>
+  <label for="stage">Stage</label>
+  <select id="stage">
+    <option value="1">Stage 1</option>
+    <option value="2">Stage 2</option>
+    <option value="3">Stage 3</option>
+  </select>
+</section>
+
+<section>
+  <button id="btnStage" onclick="doStage()">Stage selected Prospects rows</button>
+  <div id="stageResult" class="result"></div>
+</section>
+
+<section>
+  <button id="btnValidate" class="secondary" onclick="doValidate()">Validate Send Queue</button>
+  <div id="validateResult" class="result"></div>
+</section>
+
+<section>
+  <button id="btnSend" class="danger" onclick="doSend()">Send Batch</button>
+  <div class="muted" style="margin-top:6px;">Opens a preview showing the first message exactly as it will arrive. Nothing sends until you confirm there.</div>
+  <div id="sendResult" class="result"></div>
+</section>
+
+<section>
+  <button id="btnClear" class="secondary" onclick="doClear()">Clear Completed Queue Rows</button>
+  <div class="muted" style="margin-top:6px;">Removes rows already marked SENT / FAILED / SKIPPED / TEST-SENT.</div>
+  <div id="clearResult" class="result"></div>
+</section>
+
+<section>
+  <button id="btnRefresh" class="secondary" onclick="refreshStatus()">Refresh status</button>
+</section>
+
+<script>
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; });
+  }
+  function li(x) { return '<li>' + escapeHtml(x) + '</li>'; }
+  function currentStage() { return parseInt(document.getElementById('stage').value, 10); }
+  function setBusy(id, busy) { document.getElementById(id).disabled = busy; }
+
+  function refreshStatus() {
+    document.getElementById('status').innerHTML = 'Loading…';
+    google.script.run.withSuccessHandler(renderStatus).withFailureHandler(renderErrorInto('status')).getSidebarStatus();
+  }
+
+  function renderStatus(s) {
+    var cls = s.mode === 'LIVE' ? 'live' : 'test';
+    var html = '<div class="banner ' + cls + '">' + s.mode +
+      (s.mode === 'LIVE' ? ' — sends to real prospects' : ' — sends to your test address only') + '</div>';
+    html += '<div class="statRow"><span>Gmail quota remaining today</span><span>' + s.quotaRemaining + '</span></div>';
+    html += '<div class="statRow"><span>Max sends per run</span><span>' + s.maxSendsPerRun + '</span></div>';
+    html += '<div class="statRow"><span>Send Queue — unprocessed</span><span>' + s.queuePending + '</span></div>';
+    html += '<div class="statRow"><span>Send Queue — completed</span><span>' + s.queueDone + '</span></div>';
+    html += '<div class="statRow"><span>Templates</span><span>' +
+      s.templates.map(function (t) { return 'S' + t.stage + (t.ok ? ' ✓' : ' ✗'); }).join('  ') + '</span></div>';
+
+    var templateProblems = s.templates.filter(function (t) { return !t.ok; });
+    if (templateProblems.length) {
+      html += '<div class="errBox">Template problems:<ul>' +
+        templateProblems.map(function (t) { return li('Stage ' + t.stage + ': ' + t.error); }).join('') + '</ul></div>';
+    }
+    if (s.configProblems.length) {
+      html += '<div class="errBox">Configuration problems — sending is blocked:<ul>' +
+        s.configProblems.map(li).join('') + '</ul></div>';
+    }
+    document.getElementById('status').innerHTML = html;
+  }
+
+  function doStage() {
+    setBusy('btnStage', true);
+    document.getElementById('stageResult').innerHTML = 'Working…';
+    google.script.run
+      .withSuccessHandler(function (r) { setBusy('btnStage', false); renderStageResult(r); refreshStatus(); })
+      .withFailureHandler(function (err) { setBusy('btnStage', false); renderErrorInto('stageResult')(err); })
+      .sidebarStageSelectedRows(currentStage());
+  }
+
+  function renderStageResult(r) {
+    var el = document.getElementById('stageResult');
+    if (r.cancelled) { el.innerHTML = '<div class="muted">Cancelled — nothing staged.</div>'; return; }
+    var html = '<div class="okBox">Staged: ' + r.stagedCount + '   Not staged: ' + r.skipped.length + '</div>';
+    if (r.skipped.length) html += '<div class="warnBox">Not staged, and why:<ul>' + r.skipped.map(li).join('') + '</ul></div>';
+    if (r.previewProblems.length) {
+      html += '<div class="warnBox">Staged, but will be SKIPPED at send time unless fixed:<ul>' +
+        r.previewProblems.map(li).join('') + '</ul></div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function doValidate() {
+    setBusy('btnValidate', true);
+    document.getElementById('validateResult').innerHTML = 'Working…';
+    google.script.run
+      .withSuccessHandler(function (r) { setBusy('btnValidate', false); renderValidateResult(r); })
+      .withFailureHandler(function (err) { setBusy('btnValidate', false); renderErrorInto('validateResult')(err); })
+      .sidebarValidate(currentStage());
+  }
+
+  function renderValidateResult(r) {
+    var el = document.getElementById('validateResult');
+    if (r.templateError) { el.innerHTML = '<div class="errBox">' + escapeHtml(r.templateError) + '</div>'; return; }
+    var html = '<div class="okBox">Would send: ' + r.eligibleCount + '   Would skip: ' + r.invalidCount + '</div>';
+    html += '<div class="muted">Not gated: ' + r.notGated + (r.otherStage ? '   Other stage: ' + r.otherStage : '') + '</div>';
+    if (r.invalid.length) html += '<div class="warnBox">Skips:<ul>' + r.invalid.map(li).join('') + '</ul></div>';
+    el.innerHTML = html;
+  }
+
+  function doSend() {
+    setBusy('btnSend', true);
+    document.getElementById('sendResult').innerHTML = '<div class="muted">Opening preview…</div>';
+    google.script.run
+      .withSuccessHandler(function (r) { setBusy('btnSend', false); renderSendResult(r); })
+      .withFailureHandler(function (err) { setBusy('btnSend', false); renderErrorInto('sendResult')(err); })
+      .sidebarSendBatch(currentStage());
+}
+
+  function doClear() {
+    setBusy('btnClear', true);
+    document.getElementById('clearResult').innerHTML = 'Waiting on confirmation…';
+    google.script.run
+      .withSuccessHandler(function (r) { setBusy('btnClear', false); renderClearResult(r); refreshStatus(); })
+      .withFailureHandler(function (err) { setBusy('btnClear', false); renderErrorInto('clearResult')(err); })
+      .sidebarClearCompleted();
+}
+
+function renderClearResult(r) {
+  var el = document.getElementById('clearResult');
+  if (r.cancelled) { el.innerHTML = '<div class="muted">Cancelled — nothing cleared.</div>'; return; }
+  if (r.empty) { el.innerHTML = '<div class="muted">Send Queue is empty.</div>'; return; }
+  if (r.cleared === 0) { el.innerHTML = '<div class="muted">No completed rows to clear.</div>'; return; }
+  el.innerHTML = '<div class="okBox">Removed ' + r.cleared + ' row(s).</div>';
+}
+  
+
+  function renderSendResult(r) {
+    var el = document.getElementById('sendResult');
+    if (r && r.opened) {
+      el.innerHTML = '<div class="okBox">Preview open — confirm there to send.</div>' +
+        '<div class="muted">The run summary appears in that window. Use Refresh status afterwards.</div>';
+      return;
+    }
+    el.innerHTML = '<div class="warnBox">' + escapeHtml((r && r.title) || 'Nothing sent') + '<br>' +
+      escapeHtml((r && r.message) || '') + '</div>';
+  }
+
+  function renderErrorInto(targetId) {
+    return function (err) {
+      document.getElementById(targetId).innerHTML = '<div class="errBox">' + escapeHtml(err.message || err) + '</div>';
+    };
+  }
+
+  refreshStatus();
+</script>
