@@ -1,4 +1,5 @@
-# Outreach MVP — Development Log
+# Vale Development Log
+#united-mortgages/Vale 
 
 ## 2026-08-25 — Send Panel sidebar, staging preview folded into the same popup
 
@@ -51,13 +52,13 @@ Sidebar built, wired to the existing menu functions with no logic duplicated. St
 
 ---
 
-## 2026-08-25 — MVP build: sender, queue, staging gates, Phase 2 pre-emption
-
-**Spec:** `Vale_MVP_Build_Spec.md`, superseding the original `Outreach_Automation_Spec.md`. Built against the Phase 2 prompt (`Vale_Phase_2_Prompt.md`) as a forward-compatibility check, not as scope — nothing in Phase 2 was built this session.
+### 2026-08-25 — MVP build: sender, queue, staging gates, Phase 2 pre-emption
+[[Tue 25-Aug 2026]]
+**Spec:** `MVP_Build_Spec_v3.md`, superseding the original `Outreach_Automation_Spec.md`. Built against the Phase 2 prompt (`Phase2_Prompt_v3.md`) as a forward-compatibility check, not as scope — nothing in Phase 2 was built this session.
 
 **Goal:** A manually-triggered, human-gated batch sender for cold outreach — `Prospects` log, `Send Queue` staging surface, `Templates`, hidden `Engine` config, `Run Log`. Deliberately not a cadence engine or reply reader; that's Phase 2, and the entire point of this session was making sure Phase 2 can be bolted on without touching what ships today.
 
-### Pre-build review surfaced five spec defects, all fixed before writing code
+#### Pre-build review surfaced five spec defects, all fixed before writing code
 
 Sense-checking the spec against the Phase 2 prompt before touching the editor turned up problems the spec's own acceptance criteria wouldn't have caught, because each one only manifests once Phase 2 exists.
 
@@ -73,7 +74,7 @@ Sense-checking the spec against the Phase 2 prompt before touching the editor tu
 
 Two more added without discussion, flagged as sensible rather than negotiated: a `LockService` script lock around the send function (Phase 2's daily trigger will run alongside manual batches; without a lock, a trigger firing mid-batch reads the same blank-`Status` rows and double-sends), and a wall-clock exit at 5 minutes against Apps Script's ~6-minute ceiling — Phase 2 §4 requires this anyway, so it's the same code path built once rather than twice.
 
-### What was built
+#### What was built
 
 Ten files, header-name column resolution throughout (`headerMap_()`), never a hardcoded letter or index — the spec's own "mandatory" rule (§1) and the thing that keeps acceptance criterion 13 (reordering a column doesn't break the script) true by construction rather than by discipline.
 
@@ -88,7 +89,7 @@ Ten files, header-name column resolution throughout (`headerMap_()`), never a ha
 - **`08_Send.gs`** — the single send choke point per §9.6, the confirmation dialogs, the lock and time-budget additions, the `createDraft().send()` fix (item 5).
 - **`09_Writeback.gs`** — keyed on Prospect ID only (§9.3), the Thread-ID and Last-Contacted amendments (items 1–2), `Run Log` append.
 
-### Verified
+#### Verified
 
 No live Gmail access from the build environment, so verification split into what could be checked here and what needs a real TEST batch.
 
@@ -102,13 +103,13 @@ No live Gmail access from the build environment, so verification split into what
 
 **Not checked, needs a real TEST batch:** acceptance criteria 1, 4, 5, 6, 9, 10, 11 all depend on `GmailApp` actually sending — thread capture, the confirmation dialog showing the true first rendered message, the LIVE recipient-count gate, and the interrupted-mid-batch resume behaviour. None of these have a safe local stand-in; they get exercised for real on first install.
 
-### Flagged, not fixed
+#### Flagged, not fixed
 
 - **Per-row writes in `writeQueueFields_` are cell-by-cell**, which is a lot of individual API calls at a 200-row cap. Not batched, deliberately: batching would defeat the per-row `flush()` that the spec requires precisely so a mid-batch timeout never loses the record of mail already sent (§8.5). Correctness chosen over speed; revisit if a full-cap run is slow in practice.
 - **`Do Not Contact` email matching is exact-string**, not Gmail dot/plus-normalised. `e.payne@example.com` and `e.payne+newsletter@example.com` are different people to this code. Widening the match would catch more real duplicates but would also risk merging genuinely distinct addresses at non-Gmail domains — not a call to make blind before David's real list is imported.
 - **The real-list import is unbuilt and unowned.** `Prospects`' v3 schema doesn't map onto `Davids List`'s columns in `template_Prospecting.xlsx`. Copy-paste for now, by agreement; a one-shot importer is a flagged future idea, not scoped.
 
-### Status
+#### Status
 
 MVP built against all five pre-build fixes. Gating logic verified by local harness (13-row simulated queue, all edge cases from §11 present). Gmail-dependent acceptance criteria (1, 4, 5, 6, 9, 10, 11) outstanding, blocked on install into a real Sheet — cannot be closed from this environment. Phase 2 prompt re-read against the final code after build, not just before: none of the five fixes required revisiting.
 
@@ -116,7 +117,7 @@ MVP built against all five pre-build fixes. Gating logic verified by local harne
 
 
 ## 2026-09-03 — Addendum v1: David's List importer, HTML signature support
-
+[[Thu 03-Sep 2026]]
 **Goal:** Build both items in `MVP_Addendum_v1_HTML_Signature_and_Importer.md` — the one-shot importer and HTML signature rendering — as the last two blockers before handover. Scope locked to those two: no schema change, no Phase 2 work, `Do Not Contact` matching untouched.
 
 **Files:** new `11_Import.gs`, new `SendPreview.html`; changed `01_Engine.gs`, `04_Menu.gs`, `05_Staging.gs`, `06_Render.gs`, `08_Send.gs`, `10_Sidebar.gs`, `Sidebar.html`. `00_Schema.gs`, `02_Setup.gs`, `03_SeedData.gs`, `07_Validation.gs`, `09_Writeback.gs` and the manifest are byte-identical.
@@ -209,6 +210,7 @@ Caught by reading the real file rather than by a test: trailing blank rows fall 
 Both addendum items built. 26 assertions passing off-Sheet. Acceptance criteria 1, 2 (send-side), 3, 6 and 7 are verified here; 2 (rendering in a real inbox), 4 and 5 need the live install, as does the modal-from-sidebar check.
 
 ## 2026-09-11 — Multi-BDM rollout: architecture locked, Muki unblocked, Mike paused
+[[Fri 11-Sep 2026]]
 
 **Goal:** Resolve the open Theme A/B questions from the BDM extension Rattle — sheet architecture, Engine locking, versioning discipline — and get Muki's build unblocked.
 
@@ -233,3 +235,68 @@ Muki's template was already in hand and her use case matches David's directly (e
 Mike was texted for his outreach template to unblock his onboarding. Follow-up conversation: he confirmed he won't be using the tool short-term and it's parked to an undecided medium-term point. Not an active workstream. The schema-compatibility assumption between agent prospecting (David/Muki) and client outreach (Mike) remains formally unverified as a result — carried forward as an open flag, not resolved, not urgent while paused.
 
 **Next:** build Muki's container script against the library. See `Vale_Multi-BDM_Handover.md` for full build sequence.
+
+## 2026-09-16 — Correction: David's import/column-map flag was stale
+[[Wed 16-Sep 2026]]
+**Trigger:** Rechecking the open-threads list before starting the Muki build — `BDM Extension Handover.md` still carried "David's import/column-map mismatch... unresolved" as a live flag.
+
+**Finding:** No mismatch reproduces. `Outreach_Automation_Spec.md` documents the "Davids List" tab in `template_Prospecting.xlsx` with columns `Town/Area | First Name | Last Name | Company | Email | Insta | Phone | Job Title | ...`. `IMPORT_COLUMN_MAP` in `11_Import.gs` expects source headers `First Name, Last Name, Company, Job Title, Town/Area, Email, Phone, Insta` — a one-for-one match, including the "Insta" (not "Instagram") naming that would normally trip an importer up. Confirmed against real-world use: David's imports run fine in practice, consistent with this.
+
+**Conclusion:** Stale flag, not a live bug — same class of thing as the three known-wrong spots already noted in the README ("left alone because doc rewrites were outside the brief"). No code change made or needed.
+
+**Status:** Closed. Drop from the Theme A/B open-threads list in the Handover doc.
+
+## 2026-09-16 — Library extraction: Muki live, Engine lock, one real bug found and fixed
+[[Wed 16-Sep 2026]]
+
+**Goal:** Execute the architecture locked on 2026-09-11 — extract David's shared logic into the library, get Muki's container built against it, and ship the Engine lock and test-mode CC that were specified but not yet built. Also asked to regression-check David and update the README's stale multi-BDM section.
+
+### Extraction
+
+Five files — `00_Schema.gs`, `06_Render.gs`, `07_Validation.gs`, `09_Writeback.gs`, and (until the fix below) `05_Staging.gs` — moved into `/library` byte-identical to David's original. Verified against git, not by eye: the test harness diffs the library file against `git show main:...` and fails if a single byte differs. That's the actual regression evidence for this build, not a description of one.
+
+**`13_Api.gs` is new and was forced, not chosen.** Apps Script does not export a function whose name ends in `_`, and nearly every function in this codebase — `sheet_`, `col_`, `render_`, `sendBatch_`, all ~60 of them — does. The alternative was renaming across ~2,200 lines and losing the internal/external distinction inside the library. Instead one file names the ~20 functions that are genuinely public; everything else stays private and unreachable from a container, exactly as it was in the single-sheet build.
+
+**Each container is three files, thirteen wrappers, no logic.** `onOpen()` and every `google.script.run` target resolve in the spreadsheet-bound script, never in a library — that's a platform rule, not a design choice, and it's why the thin-container pattern can't be made any thinner than it is.
+
+### Engine lock and test-mode CC (§Theme A, now built)
+
+`MAX_SENDS_PER_RUN` and the new `MIN_DAYS_BETWEEN_EMAILS` are library constants, enforced by **override, not refusal** — `readEngine_()` replaces whatever the sheet says every time it's read. Refusal was the other option and is weaker here: Apps Script can't intercept a human typing into a cell, so a refusal could only ever be a complaint raised later, at send time. An edited cell is still surfaced, not swallowed — `engineLockViolations_()` reports it in Setup Check and the sidebar as "ignored," not silently discarded. `MIN_DAYS_BETWEEN_EMAILS` is locked but **not consumed by v1** — there's no cadence logic in this codebase yet to consume it. Declared now so the key is operator-owned from day one rather than clawed back from a BDM later.
+
+Test-mode CC is one guard, inside `sendBatch_()`, the only function that hands anything to Gmail. On a LIVE send the `cc` key is never set on the options object at all — not blank, absent. Asserted both directions. Ships with `OPERATOR_CC` blank; a wrong address here silently CCs a stranger on every test send, so it's a deliberate manual step before publishing, not a shipped default.
+
+### Muki's importer
+
+Generalised David's importer into a shared engine (`11_ImportCore.gs`) plus a per-BDM profile — the validation rules (required fields, malformed email, in-batch duplicate, already-on-Prospects) are shared and not configurable; the column map and any exclusion rule are the BDM's own.
+
+**The spec's column table didn't survive contact with the actual file.** `Address` and `Postcode` don't exist in `Muki_Template_SAMPLE.xlsx`. Verified the real header row before writing anything, per instruction to refuse rather than substitute a close-enough name — same posture `headerMap_` already takes on a missing header.
+
+`Town/Area` took two passes. First pass shipped unmapped, since none of the three candidate columns cleanly matched "Address." Reconsidered once the *fill pattern* was actually read: `Location [CHECK whether it is real Office or NO via PHONE]` is the one column carrying genuine area names, sparsely; `Tube station` holds postcodes, not stations; the plain `Location` column is empty throughout. Mapped the awkward one. The objection to betting on an unstable, instruction-laden header is answered by the header-verification refusal itself — a rename produces a named, before-any-write error rather than a silent bad import, which is what makes betting on it sane. Exact-match only; both candidates share the `Location` prefix, so prefix matching would be ambiguous by construction.
+
+Built the Paused-routing exclusion rule: any of six outreach-history columns non-blank imports `Paused = Y` with the raw text concatenated into `Notes`. History is deliberately never written into `Email {n} Status` — that column means "this tool sent this stage," and a hand-logged "Aug 22" from her tracking sheet isn't that.
+
+### A pre-existing bug, found and fixed
+
+The Send Panel's "Clear Completed Queue Rows" button called `clearCompletedQueueRowsCore_()`. That function has never been defined — not in the library, not in David's original single-sheet build, not in any commit in this repo's history. **Confirmed against David's live script before assuming the repo was accurate**: cloned the deployed project directly and diffed it against `main` byte-for-byte — clean, no drift. Confirmed the bug itself by execution, not grep: ran both the menu path (works) and the panel path (throws `ReferenceError`) against the stub harness. Same shape as the `maxProspectIdNumber_` bug from the 2026-09-03 addendum — a function called by name with no implementation behind it, never noticed because the two entry points have near-identical labels and the working one was the one in habitual use.
+
+Fixed by extracting the real core: it returns `{cleared, empty}` (or `null` on decline) rather than alerting, so the menu keeps its native dialogs and the panel renders inline off the same function — which is exactly what the sidebar's own comment had always described as the intent. The native confirm stays inside the core and fires from both surfaces; the panel must not be a softer gate on an irreversible delete than the menu is.
+
+### Test harness
+
+**The 26-assertion harness the 2026-09-03 entry describes does not exist in this repo, and never has** — no Node file appears anywhere in `git log --diff-filter=A`. Written fresh rather than assumed present: 218 assertions, `node harness/run.js`, no `npm install`, including a dependency-free `.xlsx` reader so `Muki_Template_SAMPLE.xlsx` is read directly on every run instead of transcribed into a static fixture. Covers David's unchanged behaviour, the Engine lock (edit survives *and* row-deletion survives), the CC on both paths, Muki's importer against the real sample, and the clear-completed fix on both surfaces. This is new evidence, not a continuation of the old suite — stated as such in the harness's own header rather than implying parity with something that isn't there.
+
+### README
+
+Checked the three README complaints named in the 2026-09-03 entry against the actual current file before touching anything. **None reproduce** — the importer is documented, the dialogs are correctly described as HTML, and the sidebar-dialog-risk text isn't present anywhere in the file. Left that content alone rather than inventing a fix for a problem that isn't there. Updated the parts that this session's work actually made stale: the Files table split into library/container, install rewritten as two ordered procedures, the Engine lock and CC documented, Muki's exclusion rule documented beside David's import description, and the multi-BDM appendix retitled from "(in progress)" to reflect done — with an explicit note that Muki hasn't had a real TEST send yet and her live list is still unimported.
+
+### Flagged, not fixed
+
+- **Deploy is entirely manual and outside this session's reach.** No `clasp` auth in this environment — every push, version publish, and version-pin check is the operator's own step, not verified here.
+- **`OPERATOR_CC` ships blank.** Must be set in `library/08 send.js` before publishing, or test sends carry no CC at all.
+- **Version pin needs checking in two places, not one.** The container manifest's JSON and the Apps Script editor's own Libraries panel can disagree; only the second is what actually runs.
+- **No real TEST-mode send from Muki's sheet yet.** Deferred by the operator this session, twice — not closeable without a live Sheet.
+- **Muki's actual working list is not imported.** Deferred by design, per the original build boundary — a decision for her to make once the tool is in front of her, not part of this build.
+
+### Status
+
+Library extraction, Engine lock, test-mode CC, Muki's importer and container, and the clear-completed fix are all verified off-Sheet — 218 assertions passing, PR [#1](https://github.com/ferret-stack/vale/pull/1) merged. Everything from `clasp push` onward — publishing the library version, pinning it, and the first real send — is the operator's own step and unverified from this environment.
