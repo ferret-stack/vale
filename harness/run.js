@@ -80,7 +80,7 @@ S('A. Library extraction');
   ok(!publicApi.some(n => n.endsWith('_')), 'no public API name ends in an underscore');
 
   // The strongest regression evidence available: these carried over untouched.
-  const identical = ['00 schema.js', '05 staging.js', '06 render.js', '07 validation.js',
+  const identical = ['00 schema.js', '06 render.js', '07 validation.js',
                      '09 writeback.js'];
   identical.forEach(f => {
     let orig;
@@ -90,6 +90,23 @@ S('A. Library extraction');
     const now = fs.readFileSync(path.join(libDir, f));
     ok(Buffer.compare(orig, now) === 0, f + ' byte-identical to David\'s original');
   });
+
+  // 05 staging.js is the one shared file this session deliberately changed, to
+  // write the clear-completed core that 10_Sidebar.gs had always called and
+  // nobody had ever defined. The clear-completed block is the last thing in the
+  // file, so everything ABOVE it must still be byte-identical to main — that is
+  // what keeps the staging/queue logic covered by the same regression evidence
+  // as the other four files.
+  {
+    const mainStaging = cp.execSync('git show main:"david/05 staging.js"',
+      { cwd: ROOT, maxBuffer: 1 << 24 }).toString('utf8');
+    const nowStaging = fs.readFileSync(path.join(libDir, '05 staging.js'), 'utf8');
+    const mainCut = mainStaging.indexOf('/** §7 — removes every queue row');
+    const nowCut = nowStaging.indexOf('/**\n * §7 core — removes every queue row');
+    ok(mainCut > 0 && nowCut > 0, 'the clear-completed block is locatable in both versions');
+    ok(mainStaging.slice(0, mainCut) === nowStaging.slice(0, nowCut),
+       '05 staging.js is byte-identical to main ABOVE the clear-completed block');
+  }
 
   // Containers must carry no logic and no column indices.
   ['david', 'muki', 'test'].forEach(d => {
@@ -177,33 +194,84 @@ S('B. David regression — behaviour unchanged');
   ok(!denv.run('IMPORT_PROFILE.pauseOnNonBlank'), "David's profile declares no pause rule");
 
   // -------------------------------------------------------------------------
-  // KNOWN PRE-EXISTING DEFECT, carried over deliberately unfixed.
+  // Clear Completed, both surfaces.
   //
-  // 10_Sidebar.gs calls clearCompletedQueueRowsCore_(), which has never been
-  // defined — not in this library, and not in David's original single-sheet
-  // build on `main`. The Send Panel's "Clear Completed" button therefore
-  // throws a ReferenceError, and does so in David's LIVE sheet today. The
-  // menu path (Outreach > Clear Completed Queue Rows) is unaffected: it calls
-  // clearCompletedQueueRows(), which exists and works.
-  //
-  // This is the same shape as the maxProspectIdNumber_ bug the Dev Log
-  // describes for the importer: a function called by name with no
-  // implementation behind it.
-  //
-  // It is NOT fixed here, because this session's job was to move code without
-  // changing behaviour, and fixing it would change behaviour. The assertion
-  // below pins the current reality so the defect cannot be quietly forgotten —
-  // when it IS fixed, this assertion fails, which is the reminder to delete it.
+  // 10_Sidebar.gs called clearCompletedQueueRowsCore_() from the Addendum v1
+  // build onward, and it was never written — the panel's button threw
+  // ReferenceError while the identically-labelled menu item worked. Verified
+  // against David's live script: no drift, the defect was real and shipped.
+  // The core is now written and BOTH surfaces run it.
   // -------------------------------------------------------------------------
-  const libSrc = fs.readFileSync(path.join(ROOT, 'library', '10 sidebar.js'), 'utf8');
-  ok(/clearCompletedQueueRowsCore_\s*\(/.test(libSrc),
-     'KNOWN DEFECT: sidebar still calls the undefined clearCompletedQueueRowsCore_()');
-  const allLib = fs.readdirSync(path.join(ROOT, 'library')).filter(f => f.endsWith('.js'))
-    .map(f => fs.readFileSync(path.join(ROOT, 'library', f), 'utf8')).join('\n');
-  ok(!/function\s+clearCompletedQueueRowsCore_/.test(allLib),
-     'KNOWN DEFECT: ...and it is defined nowhere — Send Panel "Clear Completed" throws');
-  ok(/function\s+clearCompletedQueueRows\s*\(/.test(allLib),
-     'the MENU path clearCompletedQueueRows() does exist and is unaffected');
+  {
+    const Q = () => [
+      { 'Prospect ID': 'P-1', 'Send?': 'Y', Email: 'a@example.com', Status: 'SENT',      Stage: 1 },
+      { 'Prospect ID': 'P-2', 'Send?': 'Y', Email: 'b@example.com', Status: 'TEST-SENT', Stage: 1 },
+      { 'Prospect ID': 'P-3', 'Send?': 'Y', Email: 'c@example.com', Status: '' }
+    ];
+    const rowsLeft = e => readBack(e, 'Send Queue').map(r => r['Prospect ID']);
+
+    // --- the sidebar path, which used to throw on every call ---
+    const sYes = fresh({ queue: Q(), confirmAnswer: 'YES' });
+    let sRes;
+    let threw = false;
+    try { sRes = sYes.call('sidebarClearCompleted'); } catch (e) { threw = true; }
+    ok(!threw, 'the Send Panel button no longer throws ReferenceError');
+    eq(sRes, { cancelled: false, cleared: 2, empty: false },
+       'panel gets the shape Sidebar.html renders: {cancelled, cleared, empty}');
+    eq(rowsLeft(sYes), ['P-3'], 'panel clears both completed rows and keeps the pending one');
+
+    const sNo = fresh({ queue: Q(), confirmAnswer: 'NO' });
+    eq(sNo.call('sidebarClearCompleted'), { cancelled: true, cleared: 0, empty: false },
+       'declining the confirm from the panel reports cancelled');
+    eq(rowsLeft(sNo), ['P-1', 'P-2', 'P-3'], 'declining from the panel deletes nothing');
+
+    const sEmpty = fresh({ queue: [], confirmAnswer: 'YES' });
+    eq(sEmpty.call('sidebarClearCompleted'), { cancelled: false, cleared: 0, empty: true },
+       'an empty queue reports empty:true, not cleared:0 — the panel words them differently');
+
+    const sNone = fresh({ confirmAnswer: 'YES', queue: [
+      { 'Prospect ID': 'P-9', 'Send?': 'Y', Email: 'z@example.com', Status: '' }] });
+    eq(sNone.call('sidebarClearCompleted'), { cancelled: false, cleared: 0, empty: false },
+       'rows present but none completed reports cleared:0, empty:false');
+
+    // --- the menu path, unchanged in behaviour ---
+    const mYes = fresh({ queue: Q(), confirmAnswer: 'YES' });
+    mYes.call('clearCompletedQueueRows');
+    eq(rowsLeft(mYes), ['P-3'], 'menu still clears the completed rows');
+    eq(mYes.alerts[mYes.alerts.length - 1].msg, 'Removed 2 row(s).',
+       'menu still reports the count in its own words');
+
+    const mNo = fresh({ queue: Q(), confirmAnswer: 'NO' });
+    mNo.call('clearCompletedQueueRows');
+    eq(rowsLeft(mNo), ['P-1', 'P-2', 'P-3'], 'declining from the menu deletes nothing');
+    ok(!mNo.alerts.some(a => a.title === 'Cleared'), 'a declined menu run reports no "Cleared"');
+
+    const mEmpty = fresh({ queue: [], confirmAnswer: 'YES' });
+    mEmpty.call('clearCompletedQueueRows');
+    eq(mEmpty.alerts[mEmpty.alerts.length - 1].msg, 'The Send Queue is empty.',
+       'menu keeps its empty-queue wording');
+
+    const mNone = fresh({ confirmAnswer: 'YES', queue: [
+      { 'Prospect ID': 'P-9', 'Send?': 'Y', Email: 'z@example.com', Status: '' }] });
+    mNone.call('clearCompletedQueueRows');
+    eq(mNone.alerts[mNone.alerts.length - 1].msg, 'No queue rows have a Status yet.',
+       'menu keeps its nothing-completed wording');
+
+    // --- one implementation, not two ---
+    const allLib = fs.readdirSync(path.join(ROOT, 'library')).filter(f => f.endsWith('.js'))
+      .map(f => fs.readFileSync(path.join(ROOT, 'library', f), 'utf8')).join('\n');
+    eq((allLib.match(/function\s+clearCompletedQueueRowsCore_/g) || []).length, 1,
+       'the core is defined exactly once');
+    ok(/function clearCompletedQueueRows\(\)\s*\{\s*var r = clearCompletedQueueRowsCore_\(\)/.test(allLib),
+       'the menu path delegates to the core rather than keeping its own copy');
+    ok(/clearCompletedQueueRowsCore_\(\)/.test(
+         fs.readFileSync(path.join(ROOT, 'library', '10 sidebar.js'), 'utf8')),
+       'the panel path calls the same core');
+
+    // The irreversible delete stays behind a native confirm from BOTH surfaces.
+    eq((allLib.match(/confirm_\('Clear completed rows\?'/g) || []).length, 1,
+       'exactly one confirm, inside the core, so the panel cannot be a softer gate');
+  }
 }
 
 // ===========================================================================
