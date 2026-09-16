@@ -316,12 +316,36 @@ function pendingQueueIds_(qsh, qmap) {
   return out;
 }
 
-/** §7 — removes every queue row with a non-blank Status. */
-function clearCompletedQueueRows() {
+/**
+ * §7 core — removes every queue row with a non-blank Status.
+ *
+ * Returns { cleared: n, empty: bool }, or null if the operator declined at the
+ * confirm. Shows no alert of its own: the caller decides how to report, which
+ * is what lets the menu use native dialogs and the panel render inline without
+ * either surface duplicating the logic.
+ *
+ * 10_Sidebar.gs has called this function since the Addendum v1 build, but it
+ * was never written — the panel's "Clear Completed Queue Rows" button has
+ * therefore always thrown ReferenceError, while the identically-labelled menu
+ * item worked. Both surfaces now run this one function, which is what the
+ * sidebar's own comment always said was intended.
+ *
+ * The confirm stays NATIVE and stays here, fired from both surfaces. This is
+ * an irreversible delete, and the panel must not turn it into a softer gate
+ * than the menu's — the same reasoning that keeps the send confirmations out
+ * of the panel (§1c, and the Dev Log's note on why the preview is a modal
+ * rather than an inline section).
+ *
+ * The two "nothing to do" outcomes are distinguished rather than collapsed:
+ * `empty` means the Send Queue has no data rows at all, `cleared: 0` means it
+ * has rows but none carry a Status. They need different sentences, and the
+ * panel already renders them differently.
+ */
+function clearCompletedQueueRowsCore_() {
   var qsh = sheet_(SHEETS.QUEUE);
   var qmap = headerMap_(qsh);
   var last = qsh.getLastRow();
-  if (last < 2) { alert_('Nothing to clear', 'The Send Queue is empty.'); return; }
+  if (last < 2) return { cleared: 0, empty: true };
 
   var statusCol = col_(qmap, 'Status', SHEETS.QUEUE);
   var values = qsh.getRange(2, 1, last - 1, qsh.getLastColumn()).getValues();
@@ -330,10 +354,24 @@ function clearCompletedQueueRows() {
     if (!isBlank_(r[statusCol - 1])) toDelete.push(i + 2);
   });
 
-  if (!toDelete.length) { alert_('Nothing to clear', 'No queue rows have a Status yet.'); return; }
-  if (!confirm_('Clear completed rows?', 'Remove ' + toDelete.length + ' completed row(s) from the Send Queue?\n\n' +
-    'The record of what was sent stays on Prospects and in the Run Log.')) return;
+  if (!toDelete.length) return { cleared: 0, empty: false };
 
+  if (!confirm_('Clear completed rows?', 'Remove ' + toDelete.length + ' completed row(s) from the Send Queue?\n\n' +
+    'The record of what was sent stays on Prospects and in the Run Log.')) return null;
+
+  // Descending, so each deletion cannot shift the index of one not yet done.
   toDelete.reverse().forEach(function (rowNum) { qsh.deleteRow(rowNum); });
-  alert_('Cleared', 'Removed ' + toDelete.length + ' row(s).');
+  return { cleared: toDelete.length, empty: false };
+}
+
+/**
+ * §7 menu entry point. Same core, native reporting — the messages and the
+ * confirm are unchanged from the single-sheet build.
+ */
+function clearCompletedQueueRows() {
+  var r = clearCompletedQueueRowsCore_();
+  if (r === null) return;                        // declined at the confirm
+  if (r.empty) { alert_('Nothing to clear', 'The Send Queue is empty.'); return; }
+  if (!r.cleared) { alert_('Nothing to clear', 'No queue rows have a Status yet.'); return; }
+  alert_('Cleared', 'Removed ' + r.cleared + ' row(s).');
 }

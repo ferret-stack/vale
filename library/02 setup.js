@@ -1,13 +1,23 @@
 /**
- * 02_Setup.gs
- * Run setupWorkbook() ONCE from the Apps Script editor on a blank spreadsheet.
- * The resulting file is the master; distribute via Drive ▸ Make a copy.
+ * 02_Setup.gs  [LIBRARY]
+ * Called ONCE per BDM, via the container's setupWorkbook(), on a blank sheet.
  *
  * Idempotent by design: re-running never duplicates a sheet, never reorders or
  * deletes a column, never overwrites an Engine value the operator has changed,
  * and never re-adds seed data to a sheet that already has rows.
+ *
+ * MULTI-BDM CHANGE: seed data is no longer a global this file reaches for. It
+ * is passed in, because seed data is BDM-owned and lives in the container
+ * script (03_SeedData.gs there, absent here — the gap at 03 in this library is
+ * deliberate and is the reminder of that). Everything else is shared.
+ *
+ * seed = { prospects: [ …PROSPECT_SEED… ], templates: [ …TEMPLATE_SEED… ] }
  */
-function setupWorkbook() {
+function setupWorkbook_(seed) {
+  if (!seed || !seed.prospects || !seed.templates) {
+    throw new Error('setupWorkbook_ needs seed data from the container script: ' +
+      '{ prospects: PROSPECT_SEED, templates: TEMPLATE_SEED }.');
+  }
   var ss = SpreadsheetApp.getActive();
 
   var prospects = ensureSheet_(ss, SHEETS.PROSPECTS, PROSPECT_COLS);
@@ -17,8 +27,8 @@ function setupWorkbook() {
   var runLog    = ensureSheet_(ss, SHEETS.RUN_LOG, RUN_LOG_COLS);
 
   ensureEngineDefaults_(engine);
-  ensureTemplates_(templates);
-  ensureSeedProspects_(prospects);
+  ensureTemplates_(templates, seed.templates);
+  ensureSeedProspects_(prospects, seed.prospects);
 
   formatSheet_(prospects);
   formatSheet_(queue);
@@ -48,6 +58,8 @@ function setupWorkbook() {
     'Before sending anything, unhide the Engine sheet (View ▸ Show hidden sheets) and replace:\n' +
     '  • TEST_EMAIL\n  • SENDER_NAME\n  • SIGNATURE_BLOCK\n\n' +
     'The run will refuse to send while these hold their shipped placeholder text.\n\n' +
+    'MAX_SENDS_PER_RUN and MIN_DAYS_BETWEEN_EMAILS are set by the operator and ' +
+    'are shown for reference only — editing them here has no effect.\n\n' +
     'Then reload the spreadsheet to pick up the Outreach menu.',
     SpreadsheetApp.getUi().ButtonSet.OK);
 }
@@ -114,10 +126,10 @@ function ensureEngineDefaults_(sh) {
 }
 
 /** Seeds draft copy only if the sheet has no rows — never overwrites edits. */
-function ensureTemplates_(sh) {
+function ensureTemplates_(sh, templateSeed) {
   if (sh.getLastRow() > 1) return;
   var map = headerMap_(sh);
-  var rows = TEMPLATE_SEED.map(function (t) {
+  var rows = templateSeed.map(function (t) {
     var r = new Array(sh.getLastColumn()).fill('');
     r[col_(map, 'Stage', SHEETS.TEMPLATES) - 1] = t.stage;
     r[col_(map, 'Name', SHEETS.TEMPLATES) - 1] = t.name;
@@ -130,14 +142,14 @@ function ensureTemplates_(sh) {
   sh.getRange(2, 1, rows.length, sh.getLastColumn()).setWrap(true);
 }
 
-/** Seeds 15 dummy prospects only if the sheet has no rows. */
-function ensureSeedProspects_(sh) {
+/** Seeds the container's dummy prospects only if the sheet has no rows. */
+function ensureSeedProspects_(sh, prospectSeed) {
   if (sh.getLastRow() > 1) return;
   var map = headerMap_(sh);
   var width = sh.getLastColumn();
   var today = new Date();
 
-  var rows = PROSPECT_SEED.map(function (p, i) {
+  var rows = prospectSeed.map(function (p, i) {
     var r = new Array(width).fill('');
     function set(name, v) { r[col_(map, name, SHEETS.PROSPECTS) - 1] = v; }
     set('Prospect ID', PROSPECT_ID_PREFIX + padId_(i + 1));
@@ -151,6 +163,9 @@ function ensureSeedProspects_(sh) {
     set('Source', 'Seed data');
     set('Date Added', today);
     if (p.dnc) set('Do Not Contact', 'Y');
+    // Paused is a routing outcome of the importer (see 11_ImportCore.gs), so
+    // a seed row can carry it too and exercise the send-time gate on install.
+    if (p.paused) set('Paused', 'Y');
     if (p.note) set('Notes', p.note);
     return r;
   });

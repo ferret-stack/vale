@@ -59,6 +59,7 @@
 
 <div class="envelope">
   <div><span class="k">To</span><b id="to"></b> <span id="intended" style="color:#5f6368"></span></div>
+  <div id="ccRow" style="display:none"><span class="k">Cc</span><b id="cc"></b> <span style="color:#5f6368">(operator, test sends only)</span></div>
   <div><span class="k">Subject</span><b id="subject"></b></div>
 </div>
 
@@ -105,6 +106,13 @@
     if (P.mode === 'TEST') {
       document.getElementById('intended').textContent = '(instead of ' + P.firstIntended + ')';
     }
+    // Only ever populated on a TEST plan — buildSendPlan_() sets ccRecipient
+    // to '' for LIVE, so this row cannot appear on a live send.
+    if (P.ccRecipient) {
+      document.getElementById('cc').textContent = P.ccRecipient;
+      document.getElementById('ccRow').style.display = '';
+    }
+
     document.getElementById('subject').textContent = P.firstSubject;
 
     document.getElementById('msg').srcdoc = P.previewHtml;

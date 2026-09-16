@@ -1,5 +1,5 @@
 /**
- * 08_Send.gs — §8 "Run behaviour", Addendum v1 §1b/§1c.
+ * 08_Send.gs  [LIBRARY] — §8 "Run behaviour", Addendum v1 §1b/§1c.
  *
  * sendBatch_(rows, stage, mode) is still the ONLY place mail leaves this
  * project (§9.6). Phase 2's trigger must call this same function, not a copy.
@@ -26,6 +26,43 @@
  * had to move. The message preview is the one that belongs immediately before
  * the send, so the count confirmation went first.
  */
+
+/**
+ * MULTI-BDM CHANGE — the operator CC (Dev Log 2026-09-11, Theme A: "test-mode
+ * sends CC the operator's own address. Live sends unaffected.").
+ *
+ * Library-level and operator-owned, deliberately NOT an Engine row: an Engine
+ * row is a cell a BDM can edit, and the point of this address is that the
+ * operator sees the test traffic whether or not the BDM wants them to. Setting
+ * it here also means it is set once for the whole fleet rather than three
+ * times, and a BDM cannot remove themselves from operator oversight by
+ * clearing a cell.
+ *
+ * >>> SET THIS BEFORE PUBLISHING THE LIBRARY VERSION. <<<
+ * Shipped blank on purpose. A blank value disables the CC and changes nothing
+ * about how mail is sent; it does not error, and it does not block a run. It is
+ * blank rather than pre-filled because the wrong address here is worse than
+ * none: it silently CCs a stranger on every test send, and nothing in the
+ * system would report it.
+ *
+ * Applied in ONE place — the opts object built inside sendBatch_() — and
+ * guarded there by `mode === MODE.TEST`. sendBatch_() is the only function in
+ * the project that hands anything to Gmail (§9.6), so that single guard is the
+ * whole of the live-path exclusion: there is no second send path for it to leak
+ * through, and sendBatch_() re-reads Engine!MODE and refuses to run if it
+ * disagrees with the mode it was passed, so the guard cannot be reached with a
+ * stale mode.
+ */
+var OPERATOR_CC = '';
+
+/**
+ * The CC that will actually be applied for a mode.
+ * LIVE returns '' unconditionally — the mode check lives here, in one
+ * expression, rather than being restated at the call site.
+ */
+function operatorCcFor_(mode) {
+  return (mode === MODE.TEST) ? trim_(OPERATOR_CC) : '';
+}
 
 function sendBatchFromMenu() {
   var stage = promptStage_();
@@ -116,6 +153,9 @@ function buildSendPlan_(stage) {
     firstRecipient: (mode === MODE.TEST) ? trim_(cfg.TEST_EMAIL) : toSend[0].email,
     firstIntended: toSend[0].email,
     firstSubject: (mode === MODE.TEST) ? testSubject_(preview.subject, toSend[0].email) : preview.subject,
+    // Shown in the preview so the CC is visible BEFORE anything sends, rather
+    // than being discovered afterwards in the operator's own inbox. '' in LIVE.
+    ccRecipient: operatorCcFor_(mode),
     previewHtml: preview.html,
     fingerprint: planFingerprint_(stage, mode, res, toSend)
   };
@@ -150,6 +190,7 @@ function showSendPreviewDialog_(plan) {
     firstRecipient: plan.firstRecipient,
     firstIntended: plan.firstIntended,
     firstSubject: plan.firstSubject,
+    ccRecipient: plan.ccRecipient,
     previewHtml: plan.previewHtml,
     fingerprint: plan.fingerprint
   });
@@ -258,6 +299,13 @@ function sendBatch_(rows, stage, mode) {
         if (senderName) opts.name = senderName;
         if (replyTo) opts.replyTo = replyTo;
 
+        // TEST ONLY. operatorCcFor_() returns '' for MODE.LIVE, so on a live
+        // send `cc` is not merely blank — the key is never set on the options
+        // object at all, and Gmail receives exactly what it received before
+        // this change existed. Asserted in both directions by the harness.
+        var ccAddress = operatorCcFor_(mode);
+        if (ccAddress) opts.cc = ccAddress;
+
         // createDraft().send() returns the GmailMessage. GmailApp.sendEmail()
         // returns the GmailApp object and gives no handle on the message, so
         // Thread ID could only be recovered by searching Sent mail by subject —
@@ -276,7 +324,9 @@ function sendBatch_(rows, stage, mode) {
           'Sent At': now,
           'Thread ID': threadId,
           'Message ID': messageId,
-          'Notes': (mode === MODE.TEST) ? 'Test send — delivered to ' + testEmail : ''
+          'Notes': (mode === MODE.TEST)
+            ? 'Test send — delivered to ' + testEmail + (ccAddress ? ', cc ' + ccAddress : '')
+            : ''
         };
 
         if (item.unlinked) {
