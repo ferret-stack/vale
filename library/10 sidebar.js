@@ -1,6 +1,11 @@
 /**
- * 10_Sidebar.gs
- * Server-side functions callable from Sidebar.html via google.script.run.
+ * 10_Sidebar.gs  [LIBRARY]
+ * The implementations behind the Send Panel.
+ *
+ * MULTI-BDM NOTE: google.script.run resolves names in the CONTAINER script,
+ * never in a library, so Sidebar.html cannot reach these functions directly.
+ * Each container defines one-line wrappers of the same names that delegate
+ * here. See the note at the top of 04_Menu.gs — same constraint, same reason.
  *
  * These are thin wrappers around the same core functions the menu uses
  * (05_Staging.gs, 07_Validation.gs, 08_Send.gs) — no send/staging/validation
@@ -25,7 +30,7 @@ function showSendPanel() {
 }
 
 /** Snapshot the sidebar shows on open and after every action. */
-function getSidebarStatus() {
+function getSidebarStatus_impl_() {
   var cfg = readEngine_();
   var mode = engineMode_(cfg);
   var configProblems = engineProblems_(cfg, mode);
@@ -56,6 +61,13 @@ function getSidebarStatus() {
     templates: templates,
     quotaRemaining: MailApp.getRemainingDailyQuota(),
     maxSendsPerRun: engineMaxSends_(cfg),
+    // Locked, operator-owned. Sent to the panel so it can show them as
+    // read-only rather than leaving a BDM to wonder why the cell won't take.
+    lockedSettings: ENGINE_LOCKED_KEYS.map(function (k) {
+      return { key: k, value: String(ENGINE_LOCKED_VALUES[k]) };
+    }),
+    lockViolations: engineLockViolations_(),
+    operatorCc: operatorCcFor_(mode),
     queuePending: pending,
     queueDone: done
   };
@@ -65,7 +77,7 @@ function getSidebarStatus() {
  * Reads the CURRENT selection on Prospects (must be the active sheet when
  * the sidebar button is clicked) and stages it for the given stage.
  */
-function sidebarStageSelectedRows(stage) {
+function sidebarStageSelectedRows_impl_(stage) {
   var ss = SpreadsheetApp.getActive();
   if (ss.getActiveSheet().getName() !== SHEETS.PROSPECTS) {
     throw new Error('Click on the Prospects tab and select rows there first, then use this panel.');
@@ -82,7 +94,7 @@ function sidebarStageSelectedRows(stage) {
   return { cancelled: false, stagedCount: result.stagedCount, skipped: result.skipped, previewProblems: result.previewProblems };
 }
 
-function sidebarValidate(stage) {
+function sidebarValidate_impl_(stage) {
   var r = runValidation_(stage);
   return {
     templateError: r.templateError,
@@ -108,7 +120,7 @@ function sidebarValidate(stage) {
  * HtmlService dialog cannot return a value to the call that opened it. Use
  * Refresh status in the panel afterwards.
  */
-function sidebarSendBatch(stage) {
+function sidebarSendBatch_impl_(stage) {
   return startSendFlow_(stage);
 }
 
@@ -117,7 +129,7 @@ function sidebarSendBatch(stage) {
  * result the panel renders inline; null means the operator declined at the
  * native confirm.
  */
-function sidebarClearCompleted() {
+function sidebarClearCompleted_impl_() {
   var r = clearCompletedQueueRowsCore_();
   if (r === null) return { cancelled: true, cleared: 0, empty: false };
   return { cancelled: false, cleared: r.cleared, empty: r.empty };

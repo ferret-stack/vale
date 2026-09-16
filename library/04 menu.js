@@ -1,8 +1,25 @@
 /**
- * 04_Menu.gs — §7. No time-driven triggers in v1.
+ * 04_Menu.gs  [LIBRARY] — §7. No time-driven triggers in v1.
+ *
+ * MULTI-BDM CHANGE — why the menu is built here but the functions it names
+ * are not.
+ *
+ * addItem()'s second argument is a FUNCTION NAME RESOLVED IN THE CONTAINER
+ * SCRIPT, not in this library. Apps Script looks it up in the global scope of
+ * the project bound to the spreadsheet. The same is true of every
+ * google.script.run call from Sidebar.html and SendPreview.html.
+ *
+ * So the menu's SHAPE is shared (built here, identical for every BDM) while
+ * the handful of names it points at must exist in each container. The
+ * container's wrappers are one line each and do nothing but delegate — see
+ * 01_Container.gs in any BDM folder. This is the one place the thin-container
+ * pattern cannot be made thinner, and it is a platform constraint, not a
+ * design choice.
+ *
+ * The import item is the only per-BDM label, so it is driven by the profile.
  */
-function onOpen() {
-  SpreadsheetApp.getUi()
+function buildMenu_(profile) {
+  var menu = SpreadsheetApp.getUi()
     .createMenu('Outreach')
     .addItem('Open Send Panel', 'menuOpenSidebar')
     .addSeparator()
@@ -12,20 +29,12 @@ function onOpen() {
     .addItem('Send Batch', 'menuSendBatch')
     .addSeparator()
     .addItem('Clear Completed Queue Rows', 'menuClearCompleted')
-    .addSeparator()
-    .addItem('Import from David\'s List', 'menuImportDavidsList')
-    .addItem('Setup Check', 'menuSetupCheck')
-    .addToUi();
+    .addSeparator();
+
+  if (profile) menu.addItem('Import from ' + profile.label, 'menuImportList');
+
+  menu.addItem('Setup Check', 'menuSetupCheck').addToUi();
 }
-
-function menuOpenSidebar() { withErrors_(showSendPanel); }
-
-function menuAddToQueue() { withErrors_(addProspectsToQueue); }
-function menuValidateQueue() { withErrors_(validateSendQueue); }
-function menuSendBatch() { withErrors_(sendBatchFromMenu); }
-function menuClearCompleted() { withErrors_(clearCompletedQueueRows); }
-function menuImportDavidsList() { withErrors_(importDavidsList); }
-function menuSetupCheck() { withErrors_(setupCheck); }
 
 /** Any thrown error becomes a dialog, never a silent failure in the log. */
 function withErrors_(fn) {
@@ -66,7 +75,25 @@ function setupCheck() {
   var lines = [];
 
   lines.push('MODE: ' + mode + (mode === MODE.LIVE ? '  ← live mail goes to real prospects' : '  (mail goes to your test address)'));
-  lines.push('Max sends per run: ' + engineMaxSends_(cfg));
+  lines.push('Max sends per run: ' + engineMaxSends_(cfg) + '  (operator-set, locked)');
+  lines.push('Min days between emails: ' + engineMinDaysBetween_(cfg) + '  (operator-set, locked; Phase 2)');
+
+  var cc = operatorCcFor_(mode);
+  if (mode === MODE.TEST) {
+    lines.push('Operator CC on test sends: ' + (cc || 'none set'));
+  }
+
+  // An ignored edit is reported as ignored. Silent correctness would leave a
+  // BDM believing they had changed something that had not changed.
+  var lockIssues = engineLockViolations_();
+  if (lockIssues.length) {
+    lines.push('');
+    lines.push('Locked settings edited on the Engine sheet — these edits are IGNORED:');
+    lockIssues.forEach(function (v) {
+      lines.push('  • ' + v.key + ': sheet says "' + v.sheetValue + '", running value is ' +
+        v.effectiveValue + '. Ask the operator to change it.');
+    });
+  }
   lines.push('');
 
   [1, 2, 3].forEach(function (s) {
