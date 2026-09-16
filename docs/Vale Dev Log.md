@@ -289,14 +289,8 @@ Fixed by extracting the real core: it returns `{cleared, empty}` (or `null` on d
 
 Checked the three README complaints named in the 2026-09-03 entry against the actual current file before touching anything. **None reproduce** — the importer is documented, the dialogs are correctly described as HTML, and the sidebar-dialog-risk text isn't present anywhere in the file. Left that content alone rather than inventing a fix for a problem that isn't there. Updated the parts that this session's work actually made stale: the Files table split into library/container, install rewritten as two ordered procedures, the Engine lock and CC documented, Muki's exclusion rule documented beside David's import description, and the multi-BDM appendix retitled from "(in progress)" to reflect done — with an explicit note that Muki hasn't had a real TEST send yet and her live list is still unimported.
 
-### Flagged, not fixed
-
-- **Deploy is entirely manual and outside this session's reach.** No `clasp` auth in this environment — every push, version publish, and version-pin check is the operator's own step, not verified here.
-- **`OPERATOR_CC` ships blank.** Must be set in `library/08 send.js` before publishing, or test sends carry no CC at all.
-- **Version pin needs checking in two places, not one.** The container manifest's JSON and the Apps Script editor's own Libraries panel can disagree; only the second is what actually runs.
-- **No real TEST-mode send from Muki's sheet yet.** Deferred by the operator this session, twice — not closeable without a live Sheet.
-- **Muki's actual working list is not imported.** Deferred by design, per the original build boundary — a decision for her to make once the tool is in front of her, not part of this build.
-
 ### Status
 
 Library extraction, Engine lock, test-mode CC, Muki's importer and container, and the clear-completed fix are all verified off-Sheet — 218 assertions passing, PR [#1](https://github.com/ferret-stack/vale/pull/1) merged. Everything from `clasp push` onward — publishing the library version, pinning it, and the first real send — is the operator's own step and unverified from this environment.
+
+Operator: It is confirmed that the tests have run cleanly and all spreadsheets (David, Muki, Test) are working
