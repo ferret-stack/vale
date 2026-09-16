@@ -175,6 +175,35 @@ S('B. David regression — behaviour unchanged');
             ['Phone', 'Phone'], ['Insta', 'Instagram']],
      "David's import map is unchanged from the single-sheet build");
   ok(!denv.run('IMPORT_PROFILE.pauseOnNonBlank'), "David's profile declares no pause rule");
+
+  // -------------------------------------------------------------------------
+  // KNOWN PRE-EXISTING DEFECT, carried over deliberately unfixed.
+  //
+  // 10_Sidebar.gs calls clearCompletedQueueRowsCore_(), which has never been
+  // defined — not in this library, and not in David's original single-sheet
+  // build on `main`. The Send Panel's "Clear Completed" button therefore
+  // throws a ReferenceError, and does so in David's LIVE sheet today. The
+  // menu path (Outreach > Clear Completed Queue Rows) is unaffected: it calls
+  // clearCompletedQueueRows(), which exists and works.
+  //
+  // This is the same shape as the maxProspectIdNumber_ bug the Dev Log
+  // describes for the importer: a function called by name with no
+  // implementation behind it.
+  //
+  // It is NOT fixed here, because this session's job was to move code without
+  // changing behaviour, and fixing it would change behaviour. The assertion
+  // below pins the current reality so the defect cannot be quietly forgotten —
+  // when it IS fixed, this assertion fails, which is the reminder to delete it.
+  // -------------------------------------------------------------------------
+  const libSrc = fs.readFileSync(path.join(ROOT, 'library', '10 sidebar.js'), 'utf8');
+  ok(/clearCompletedQueueRowsCore_\s*\(/.test(libSrc),
+     'KNOWN DEFECT: sidebar still calls the undefined clearCompletedQueueRowsCore_()');
+  const allLib = fs.readdirSync(path.join(ROOT, 'library')).filter(f => f.endsWith('.js'))
+    .map(f => fs.readFileSync(path.join(ROOT, 'library', f), 'utf8')).join('\n');
+  ok(!/function\s+clearCompletedQueueRowsCore_/.test(allLib),
+     'KNOWN DEFECT: ...and it is defined nowhere — Send Panel "Clear Completed" throws');
+  ok(/function\s+clearCompletedQueueRows\s*\(/.test(allLib),
+     'the MENU path clearCompletedQueueRows() does exist and is unaffected');
 }
 
 // ===========================================================================
