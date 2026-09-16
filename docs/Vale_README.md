@@ -145,7 +145,13 @@ Paused rather than skipped, because the person is a real prospect and belongs on
 
 David's list has no equivalent columns, so his import has no such rule and every row he imports is active.
 
-**Muki's `Town/Area` is not filled by her importer.** The mapping her build was specified against listed an `Address` column; her actual template has no such column, and the three plausible near-misses are all either unstable, mislabelled, or empty. Rather than guess — a wrong guess here does not fail loudly, it ships a plausible-looking wrong town inside real emails — the field is left unmapped and her seed templates omit `{{TownArea}}`. Resolving it later is one line in her `00_Config.gs`.
+**Muki's `Town/Area` maps from a header with an instruction baked into it, and that's deliberate.** The mapping her build was specified against listed an `Address` column. Her actual template has no such column — it has three candidates, and the fill pattern decided between them: `Tube station` holds postcodes rather than stations, the tidy `Location` column is empty on every row (added with the intent to migrate, seemingly never used), and the one carrying real area names is `Location [CHECK whether it is real Office or NO via PHONE]` — a working note to herself that happens to be a column heading.
+
+Betting on a header like that would normally be a mistake, because it will be reworded. That objection is answered by the refusal: a rename produces a named, before-any-write error listing what's missing and what the tab actually has, so the failure is loud and the fix is one line. Mapping the empty `Location` instead would have been stable and worthless.
+
+If it is reworded, update the string in her `00_Config.gs` to match exactly. **Don't reach for prefix or fuzzy matching** — both candidate columns begin with `Location`, so a prefix match is ambiguous by construction and would silently pick the wrong one.
+
+The column is only sparsely filled, so many imported rows still have `Town/Area` blank. That's why her seed templates don't use `{{TownArea}}`: the renderer treats a missing placeholder value as a hard failure, so a template depending on it would skip every row that lacks one.
 
 **The importer matches on email only, not email + name.** Email is already the identity the rest of the system runs on — the `Do Not Contact` check above depends on it. Matching on name too would let one address end up on two `Prospects` rows, and a block on one would be invisible to the other. The cost lands on shared mailboxes: two different people both reachable at `office@company.com` only get the first one imported — reported by name and source row, not silent, so the second can be added by hand.
 

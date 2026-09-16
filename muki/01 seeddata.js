@@ -48,17 +48,19 @@ var PROSPECT_SEED = [
  *
  * DIFFERENT FROM DAVID'S SEED COPY, deliberately: {{TownArea}} is not used.
  *
- * Her importer cannot fill Town/Area — the source column it was supposed to
- * come from does not exist in her template (see 00_Config.gs). A template
- * using {{TownArea}} would therefore hard-fail EVERY imported row at send
- * time, with a correct but baffling "missing value for {{TownArea}}" on each.
- * The copy uses only fields her data actually carries: {{FirstName}},
- * {{Company}} and {{JobTitle}}.
+ * Her importer DOES map Town/Area (from the long "Location [CHECK ...]"
+ * header — see 00_Config.gs), but that column is only sparsely filled in her
+ * source: one row in eight carries an area name. A template using
+ * {{TownArea}} would hard-fail every imported row that lacks one, with a
+ * correct but baffling "missing value for {{TownArea}}" on each, because the
+ * renderer treats a missing placeholder value as a hard failure rather than
+ * merging a blank.
  *
- * The seed rows above DO have Town/Area filled, because they are dummy data
- * written by hand — so if the Town/Area mapping is resolved later, adding
- * {{TownArea}} back to the copy is a one-cell edit on the Templates sheet and
- * the seed rows will already exercise it.
+ * So the copy uses only fields her data reliably carries: {{FirstName}},
+ * {{Company}} and {{JobTitle}}. If her list fills in over time, adding
+ * {{TownArea}} back is a one-cell edit on the Templates sheet — and the seed
+ * rows below already have Town/Area populated, so it is exercised the moment
+ * anyone tries.
  */
 var TEMPLATE_SEED = [
   {

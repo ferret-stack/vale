@@ -9,6 +9,8 @@ module.exports = function (T) {
   /** The sample's real contents, read straight from the .xlsx every run. */
   const SAMPLE_GRID = readSheet(SAMPLE, 'Muki Template');
   const SAMPLE_HEADERS = SAMPLE_GRID[0];
+  /** The column Town/Area maps from. Long, and that is the point — see muki/00_Config.gs. */
+  const LOC = 'Location [CHECK whether it is real Office or NO via PHONE]';
 
   function mukiEnv(opts) {
     opts = opts || {};
@@ -33,8 +35,12 @@ module.exports = function (T) {
        'the brief\'s "Address" column does NOT exist in the sample — not mapped');
     ok(!SAMPLE_HEADERS.includes('Postcode'),
        'the brief\'s "Postcode" column does NOT exist in the sample either');
-    ok(SAMPLE_HEADERS.includes('Location [CHECK whether it is real Office or NO via PHONE]'),
-       'the near-miss "Location [CHECK ...]" column is present and deliberately unmapped');
+    ok(SAMPLE_HEADERS.includes(LOC),
+       'the column standing in for "Address" is present, verbatim, instruction and all');
+    ok(SAMPLE_HEADERS.includes('Location'),
+       'the OTHER Location column also exists — which is why prefix matching is unsafe');
+    ok(SAMPLE_HEADERS.filter(h => h.indexOf('Location') === 0).length === 2,
+       'two headers begin with "Location": an exact match is the only safe match');
 
     const env = mukiEnv();
     const profile = env.run('IMPORT_PROFILE');
@@ -44,15 +50,20 @@ module.exports = function (T) {
 
     // Mapped source names, exactly as the brief listed them minus Address.
     eq(profile.columnMap.map(m => m[0]),
-       ['Name', 'Name (last)', 'Agency', 'Title', 'Company Phone', 'Email',
+       ['Name', 'Name (last)', 'Agency', 'Title', LOC, 'Company Phone', 'Email',
         'LinkedIn (Decision maker)', 'Insta Link (Decision maker)', 'Website'],
-       'the nine verified source headers are mapped');
+       'the ten verified source headers are mapped');
     eq(profile.columnMap.map(m => m[1]),
-       ['First Name', 'Last Name', 'Company', 'Job Title', 'Phone', 'Email',
+       ['First Name', 'Last Name', 'Company', 'Job Title', 'Town/Area', 'Phone', 'Email',
         'LinkedIn URL', 'Instagram', 'Website'],
        'each maps to the Prospects field the brief specified');
-    ok(!profile.columnMap.some(m => m[1] === 'Town/Area'),
-       'Town/Area is left unmapped rather than filled from a near-miss column');
+    const townSrc = profile.columnMap.filter(m => m[1] === 'Town/Area').map(m => m[0]);
+    eq(townSrc, [LOC],
+       'Town/Area comes from the column that actually carries area names');
+    ok(!profile.columnMap.some(m => m[0] === 'Location'),
+       'the empty "Location" column is NOT the one mapped');
+    ok(!profile.columnMap.some(m => m[0] === 'Tube station'),
+       '"Tube station" is not mapped — it holds postcodes, not stations');
 
     eq(profile.pauseOnNonBlank,
        ['Emailed', '1st Called', 'Visit', 'Meeting', 'Offered', 'Signed as partner'],
@@ -83,6 +94,18 @@ module.exports = function (T) {
            'a renamed EXCLUSION column is refused too — the pause rule cannot silently no-op');
     eq(readBack(env2, 'Prospects').length, 0, 'still nothing written');
 
+    // The Town/Area source is a mapped column now, so a rewording of that
+    // instruction-carrying header must refuse rather than silently import blanks.
+    // This is the safety net that makes betting on an unstable header sane.
+    const renamed3 = SAMPLE_GRID.map(r => r.slice());
+    renamed3[0][SAMPLE_HEADERS.indexOf(LOC)] = 'Location [CHECK via PHONE]';
+    const envR3 = mukiEnv({ sourceGrid: renamed3 });
+    throws(() => doImport(envR3), 'does not match the Muki Template layout',
+           'rewording the long Location header refuses, it does not import blanks');
+    throws(() => doImport(envR3), 'Location [CHECK via PHONE]',
+           'the refusal shows the reworded header so the change is obvious');
+    eq(readBack(envR3, 'Prospects').length, 0, 'nothing written on the reworded-header refusal');
+
     // Removing a dropped column is harmless — it is not depended on.
     const noType = SAMPLE_GRID.map(r => r.filter((_, i) => i !== 1));
     const env3 = mukiEnv({ sourceGrid: noType });
@@ -109,7 +132,28 @@ module.exports = function (T) {
     eq(dana['Instagram'], 'https://www.instagram.com/danawells_example/',
        'Insta Link (Decision maker) -> Instagram');
     eq(dana['Website'], '', 'Website maps (blank on this row, not dropped)');
-    eq(dana['Town/Area'], '', 'Town/Area is BLANK — the documented consequence of not guessing');
+    eq(dana['Town/Area'], '', 'Town/Area is blank here because the SOURCE cell is blank');
+
+    // The mapping must actually carry a value when the source cell has one.
+    // No sample row has both an area AND a contact, so this needs a fixture
+    // built from the real header row.
+    const withTown = [SAMPLE_HEADERS.slice(), (() => {
+      const r = new Array(24).fill('');
+      r[0] = 'Vine Street Estates'; r[5] = 'Tess'; r[6] = 'Aldridge';
+      r[7] = 'Director'; r[9] = 'tess.aldridge@example.com';
+      r[SAMPLE_HEADERS.indexOf(LOC)] = 'Nine Elms';
+      r[SAMPLE_HEADERS.indexOf('Location')] = 'SHOULD NOT BE IMPORTED';
+      r[SAMPLE_HEADERS.indexOf('Tube station')] = 'SW8 3HE';
+      return r;
+    })()];
+    const envT = mukiEnv({ sourceGrid: withTown });
+    doImport(envT);
+    const tess = readBack(envT, 'Prospects')[0];
+    eq(tess['Town/Area'], 'Nine Elms', 'a populated source cell DOES reach Town/Area');
+    const tessAll = JSON.stringify(tess);
+    ok(!tessAll.includes('SHOULD NOT BE IMPORTED'),
+       'the other "Location" column is not imported into anything');
+    ok(!tessAll.includes('SW8 3HE'), 'the postcode in "Tube station" is not imported');
 
     // Dropped columns must not leak in anywhere.
     const all = JSON.stringify(rows);
@@ -318,6 +362,14 @@ module.exports = function (T) {
     const denv = makeEnv(); denv.loadContainer('david/00 config.js');
     ok(!!denv.call('validateImportProfile_', denv.run('IMPORT_PROFILE')),
        "David's shipped profile passes validation");
+
+    // The test sheet exists to rehearse Muki's import. If its profile drifts
+    // from hers it stops testing anything she will actually run.
+    const tenv = makeEnv(); tenv.loadContainer('test/00 config.js');
+    eq(tenv.run('IMPORT_PROFILE.columnMap'), env.run('IMPORT_PROFILE.columnMap'),
+       "the test sheet's column map is identical to Muki's");
+    eq(tenv.run('IMPORT_PROFILE.pauseOnNonBlank'), env.run('IMPORT_PROFILE.pauseOnNonBlank'),
+       "the test sheet's exclusion rule is identical to Muki's");
 
     // Seed data: usable in TEST mode on install, with no real list involved.
     const m = makeEnv(); m.loadContainer('muki/01 seeddata.js');

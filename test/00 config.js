@@ -34,12 +34,15 @@ var IMPORT_PROFILE = {
     ['Name (last)',                 'Last Name'],
     ['Agency',                      'Company'],
     ['Title',                       'Job Title'],
+    ['Location [CHECK whether it is real Office or NO via PHONE]',
+                                    'Town/Area'],
     ['Company Phone',               'Phone'],
     ['Email',                       'Email'],
     ['LinkedIn (Decision maker)',   'LinkedIn URL'],
     ['Insta Link (Decision maker)', 'Instagram'],
     ['Website',                     'Website']
-    // Town/Area deliberately unmapped — see muki/00_Config.gs for the reasoning.
+    // Town/Area maps from the long "Location [CHECK ...]" header — see
+    // muki/00_Config.gs for why that one and not the other two candidates.
     // Keep this list identical to Muki's or this sheet stops being a test of hers.
   ],
 
