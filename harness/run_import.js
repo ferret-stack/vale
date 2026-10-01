@@ -446,6 +446,18 @@ module.exports = function (T) {
     eq(lib.oauthScopes.sort(), read('david').oauthScopes.sort(),
        'library and container declare the same scopes');
 
+    // An Advanced Google Service a LIBRARY uses must also be enabled in every
+    // CONTAINER that calls it — Apps Script does not propagate this from a
+    // used library the way it propagates oauthScopes (Dev Log 2026-10-01).
+    // Catches the real failure mode: someone enables Gmail v1 on the library
+    // alone and David/Muki's sends break despite their manifest looking fine.
+    const advSvc = m => ((m.dependencies || {}).enabledAdvancedServices || [])
+      .map(s => s.serviceId + '@' + s.version).sort();
+    eq(advSvc(lib), ['gmail@v1'], 'the library enables exactly the Gmail v1 advanced service');
+    ['david', 'muki', 'test'].forEach(d => {
+      eq(advSvc(read(d)), advSvc(lib), d + ' enables the same advanced service(s) as the library');
+    });
+
     // /mike is out of scope and must stay untouched.
     const mikeFiles = fs.readdirSync(path.join(ROOT, 'mike')).sort();
     eq(mikeFiles, ['.clasp.json', 'appsscript.json'], '/mike is untouched — no files added or removed');
