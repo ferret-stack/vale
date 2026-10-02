@@ -321,3 +321,16 @@ Thread ID / Message ID capture (the reason this codebase moved off `GmailApp.sen
 **Not done, deliberately:** no live Sheet was touched, nothing was deployed, and the temporary root-cause-confirmation probe (a bare `GmailApp.createDraft(...).send()` with astral escapes, sent only to the script owner) was never committed — see the PR description for the exact snippet and steps; it's meant to be pasted into the Apps Script editor and deleted immediately, not carried in version control.
 
 **Status:** Harness green (242/242). Re-authorisation note for David and Muki, and the live owner test-send steps, are in the PR description — both are the operator's own step from here, same as every previous "first real send" in this log.
+
+## 2026-10-02 — Correction: `gmail.compose` was needed after all
+[[Fri 02-Oct 2026]]
+
+**Trigger:** Operator's own live test on the `test` container, immediately after the 2026-10-01 entry. Dropped `gmail.compose` from `oauthScopes` on the reasoning that `gmail.send` covers `Gmail.Users.Messages.send()` — that reasoning was stated as fact in the previous entry and was wrong.
+
+**Finding:** With `gmail.compose` removed and `sendRawMime_()` confirmed as the only code path actually running (no `createDraft` call left anywhere outside a comment — checked by the operator with `grep` against the pushed file), the live call to `Gmail.Users.Messages.send()` failed: *"Specified permissions are not sufficient to perform the action. Required permissions: (https://mail.google.com/ || https://www.googleapis.com/auth/gmail.compose || https://www.googleapis.com/auth/gmail.modify || https://www.googleapis.com/auth/gmail.addons.current.action.compose)"*. `gmail.send` — never removed — is conspicuously absent from that list. Whatever the per-method REST documentation says in isolation, Apps Script's advanced-service authorization for this call did not accept `gmail.send` alone.
+
+**Fix:** `gmail.compose` restored to `oauthScopes` on the library and every container (`david`, `muki`, `test`) and the `docs/` reference copy. This is still a correction, not a reversion to "doesn't matter, keep everything": `gmail.compose` is the narrowest of the four scopes the live error itself named as acceptable (narrower than `gmail.modify` or the full `https://mail.google.com/`), so the "narrowest scope that works" goal from the original brief holds — the *working* minimum turned out to be one scope wider than assumed, confirmed by the actual permission error rather than by documentation.
+
+**Lesson, stated plainly:** the 2026-10-01 entry's scope claim was asserted from API reference memory, not verified against a live call, and it was wrong. Nothing about the Gmail advanced service's authorization requirements should be stated as settled again without a live send to back it up. The "Verified vs. assumed" split in that entry correctly flagged this general class of risk as unverified; this is that risk landing.
+
+**Status:** Manifests corrected in all five files; harness still green (the scope-parity check only asserts library and containers match each other, not a fixed scope list, so it caught nothing wrong here and still won't — the only way to catch the next one of these is another live test). Operator re-pushing `appsscript.json` for `library` (and whichever containers they've already pushed) is the next step.
