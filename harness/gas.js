@@ -7,14 +7,86 @@
  * be checked off a live Sheet are checked rather than asserted by reading.
  *
  * What is faithfully modelled: header-addressed reads and writes, getLastRow /
- * getLastColumn growing as rows are appended, per-row flush, the Gmail draft
- * -> send -> message-id/thread-id chain, and the script lock. What is stubbed
- * flat: formatting, column widths, and the two HtmlService surfaces, none of
- * which any assertion depends on.
+ * getLastColumn growing as rows are appended, per-row flush, the Gmail
+ * advanced-service raw-MIME send -> message-id/thread-id chain (Dev Log
+ * 2026-10-01 — GmailApp is no longer mocked at all; it is no longer called by
+ * any library file, and removing it here means a stray GmailApp call would
+ * throw "GmailApp is not defined" instead of silently working), and the
+ * script lock. What is stubbed flat: formatting, column widths, and the two
+ * HtmlService surfaces, none of which any assertion depends on.
+ *
+ * The Gmail.Users.Messages.send mock decodes the base64url raw message it is
+ * handed — headers, RFC 2047 subject, and both multipart/alternative body
+ * parts — back into plain strings, so assertions can read `sent[i].subject`,
+ * `.text`, `.html` etc. the same way they could read GmailApp's options
+ * object before this change. This proves sendRawMime_()'s own encode/decode
+ * round-trip is correct; it is NOT a Gmail API stand-in and proves nothing
+ * about how real Gmail renders the result. That is the live owner test send
+ * (see the report), which this harness cannot perform.
  */
 const path = require('path');
 const fs = require('fs');
 const vm = require('vm');
+
+/**
+ * Reverses encodeRfc2047Words_ (08_Send.gs). Our own encoder only ever
+ * produces either a plain-ASCII header value or a header made ENTIRELY of
+ * "=?UTF-8?B?...?=" words (no literal text mixed in), so decoding does not
+ * need to handle the general RFC 2047 case — just concatenate every encoded
+ * word's decoded bytes, in order, and UTF-8-decode the result.
+ */
+function decodeRfc2047_(headerValue) {
+  const re = /=\?UTF-8\?B\?([^?]*)\?=/gi;
+  let found = false;
+  const chunks = [];
+  let m;
+  while ((m = re.exec(headerValue || '')) !== null) {
+    found = true;
+    chunks.push(Buffer.from(m[1], 'base64'));
+  }
+  return found ? Buffer.concat(chunks).toString('utf8') : (headerValue || '');
+}
+
+/** Unfolds (RFC 2822 §2.2.3) and parses a block of header lines. */
+function parseHeaders_(block) {
+  const unfolded = block.replace(/\r\n[ \t]/g, ' ');
+  const headers = {};
+  unfolded.split('\r\n').forEach(line => {
+    const idx = line.indexOf(':');
+    if (idx === -1) return;
+    headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+  });
+  return headers;
+}
+
+/** Parses the raw RFC 2822 message sendRawMime_() builds, back into parts. */
+function parseRawMessage_(raw) {
+  const sep = raw.indexOf('\r\n\r\n');
+  const headers = parseHeaders_(raw.slice(0, sep));
+  const rest = raw.slice(sep + 4);
+
+  const result = { headers, text: '', html: '', subject: decodeRfc2047_(headers['subject']) };
+  const bm = /boundary="?([^";]+)"?/.exec(headers['content-type'] || '');
+  if (!bm) return result;
+
+  const boundary = bm[1];
+  const bodyEnd = rest.lastIndexOf('--' + boundary + '--');
+  const body = bodyEnd !== -1 ? rest.slice(0, bodyEnd) : rest;
+  body.split('--' + boundary + '\r\n').forEach(part => {
+    if (!part.trim()) return;
+    const pSep = part.indexOf('\r\n\r\n');
+    if (pSep === -1) return;
+    const pHeaders = parseHeaders_(part.slice(0, pSep));
+    const pBody = part.slice(pSep + 4).replace(/\r\n$/, '');
+    const decoded = /base64/i.test(pHeaders['content-transfer-encoding'] || '')
+      ? Buffer.from(pBody.replace(/\r\n/g, ''), 'base64').toString('utf8')
+      : pBody;
+    const ct = pHeaders['content-type'] || '';
+    if (/text\/plain/i.test(ct)) result.text = decoded;
+    else if (/text\/html/i.test(ct)) result.html = decoded;
+  });
+  return result;
+}
 
 function colName(n) {
   let s = '';
@@ -126,7 +198,7 @@ function makeEnv(opts) {
   opts = opts || {};
   const ss = new FakeSpreadsheet();
 
-  const sent = [];        // every GmailApp send, with the full options object
+  const sent = [];        // every Gmail.Users.Messages.send call, decoded back to plain fields
   const alerts = [];      // every Ui.alert
   const dialogs = [];     // every modal dialog opened
   const prompts = (opts.prompts || []).slice();
@@ -176,23 +248,42 @@ function makeEnv(opts) {
       flush: () => { sandbox.__flushes = (sandbox.__flushes || 0) + 1; }
     },
     MailApp: { getRemainingDailyQuota: () => quota },
-    GmailApp: {
-      createDraft(to, subject, body, options) {
-        return {
-          send() {
+    // Gmail advanced service. send(resource, userId) — resource first, as the
+    // Advanced Service wrapper orders it for every method with a request
+    // body; userId ('me') is the path parameter, second. Decodes what
+    // sendRawMime_() built rather than trusting it — see the file header.
+    Gmail: {
+      Users: {
+        Messages: {
+          send(resource, _userId) {
+            const b64 = String(resource.raw).replace(/-/g, '+').replace(/_/g, '/');
+            const raw = Buffer.from(b64, 'base64').toString('utf8');
+            const parsed = parseRawMessage_(raw);
+            const to = parsed.headers['to'];
+            const subject = parsed.subject;
             if (opts.failSendOn && opts.failSendOn(to, subject)) {
               throw new Error('simulated Gmail failure');
             }
             msgSeq++;
-            const rec = { to, subject, body, options: options || {}, id: 'msg-' + msgSeq };
+            const rec = {
+              to,
+              cc: parsed.headers['cc'],
+              replyTo: parsed.headers['reply-to'],
+              from: parsed.headers['from'],
+              subject,
+              subjectHeaderRaw: parsed.headers['subject'],
+              text: parsed.text,
+              html: parsed.html,
+              raw,
+              options: {},
+              id: 'msg-' + msgSeq
+            };
+            if (rec.cc) rec.options.cc = rec.cc;
             sent.push(rec);
             quota--;
-            return {
-              getId: () => rec.id,
-              getThread: () => ({ getId: () => 'thread-' + msgSeq })
-            };
+            return { id: rec.id, threadId: 'thread-' + msgSeq };
           }
-        };
+        }
       }
     },
     Utilities: {
@@ -204,6 +295,7 @@ function makeEnv(opts) {
       },
       computeDigest: (_alg, s) => Buffer.from(String(s)),
       base64Encode: b => Buffer.from(b).toString('base64'),
+      base64EncodeWebSafe: b => Buffer.from(String(b), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_'),
       DigestAlgorithm: { MD5: 'MD5' },
       Charset: { UTF_8: 'UTF_8' }
     },
@@ -252,4 +344,4 @@ function makeEnv(opts) {
   };
 }
 
-module.exports = { makeEnv, FakeSheet };
+module.exports = { makeEnv, FakeSheet, decodeRfc2047_ };

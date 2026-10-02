@@ -22,9 +22,27 @@ const path = require('path');
 const cp = require('child_process');
 const { fresh, makeEnv, workbook, grid, readBack } = require('./helpers.js');
 const { readSheet } = require('./xlsx.js');
+const { decodeRfc2047_ } = require('./gas.js');
 
 const ROOT = path.join(__dirname, '..');
 const SAMPLE = path.join(ROOT, 'docs', 'Muki_Template_SAMPLE.xlsx');
+
+/**
+ * PRE-EXISTING BUG, fixed here as a prerequisite to running this suite at
+ * all — unrelated to the astral-emoji/raw-MIME work this session actually
+ * came to do. Section A's "byte-identical to David's original" checks used
+ * to read `git show main:"david/<file>"`. That was correct ONLY while `main`
+ * still pointed at the pre-extraction commit; the same PR that added this
+ * harness also extracted david/00_Schema.gs etc. into library/, deleting the
+ * david/ copies, and merging that PR into main moved the floating `main` ref
+ * past its own extraction commit. From that moment on, `main:"david/<file>"`
+ * stopped resolving — a self-invalidating check that happened to still look
+ * green right up until the PR that wrote it was merged. Confirmed the fix is
+ * the originally-intended comparison, not a new one: library/<file> at HEAD
+ * is byte-identical to david/<file> at this pinned commit for all five files
+ * below, exactly as the Dev Log's 2026-09-16 entry describes.
+ */
+const PRE_EXTRACTION_SHA = '79869a0';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -85,7 +103,7 @@ S('A. Library extraction');
   identical.forEach(f => {
     let orig;
     try {
-      orig = cp.execSync('git show main:"david/' + f + '"', { cwd: ROOT, maxBuffer: 1 << 24 });
+      orig = cp.execSync('git show ' + PRE_EXTRACTION_SHA + ':"david/' + f + '"', { cwd: ROOT, maxBuffer: 1 << 24 });
     } catch (e) { return ok(false, f + ' byte-identical to David\'s original', 'git show failed'); }
     const now = fs.readFileSync(path.join(libDir, f));
     ok(Buffer.compare(orig, now) === 0, f + ' byte-identical to David\'s original');
@@ -98,7 +116,7 @@ S('A. Library extraction');
   // what keeps the staging/queue logic covered by the same regression evidence
   // as the other four files.
   {
-    const mainStaging = cp.execSync('git show main:"david/05 staging.js"',
+    const mainStaging = cp.execSync('git show ' + PRE_EXTRACTION_SHA + ':"david/05 staging.js"',
       { cwd: ROOT, maxBuffer: 1 << 24 }).toString('utf8');
     const nowStaging = fs.readFileSync(path.join(libDir, '05 staging.js'), 'utf8');
     const mainCut = mainStaging.indexOf('/** §7 — removes every queue row');
@@ -381,6 +399,133 @@ S('D. Test-mode CC (step 4)');
 // totals below cover every section.
 require('./run_import.js')({ ok, eq, throws, S, fresh, makeEnv, readBack, grid,
                              readSheet, ROOT, SAMPLE, fs, path });
+
+// ===========================================================================
+S('H. Raw MIME send path — astral-plane emoji (Dev Log 2026-10-01)');
+// ===========================================================================
+{
+  // GmailApp.createDraft(...).send() cannot carry a code point at or above
+  // U+10000 — confirmed with a standalone GmailApp script outside this
+  // codebase, which lost the same characters with no Vale code involved.
+  // sendBatch_() now calls sendRawMime_() instead, which builds a raw RFC
+  // 2822 message by hand and hands it to Gmail.Users.Messages.send().
+  //
+  // These assertions decode what sendRawMime_() built, the same way the
+  // mocked Gmail.Users.Messages.send() does (see gas.js), and prove the
+  // encode/decode round-trip is correct. They CANNOT and do NOT prove real
+  // Gmail renders the result — nothing in this harness calls the actual
+  // Gmail API. That proof is the live owner test send described in the
+  // report, which only the operator can run.
+  const ASTRAL = '📅 🤝 👉 🚩 📱'; // 📅 🤝 👉 🚩 📱
+  const BMP = '✅ ⭐ ❤️'; // ✅ ⭐ ❤️
+
+  function sendOne(subject, body, sig) {
+    const env = fresh({
+      engine: { MODE: 'TEST', SIGNATURE_BLOCK: sig },
+      prospects: [{ 'Prospect ID': 'P-00001', 'First Name': 'Ann', Email: 'ann@example.com', Company: 'A Ltd' }],
+      queue: [{ 'Prospect ID': 'P-00001', 'Send?': 'Y', Email: 'ann@example.com', 'First Name': 'Ann', Company: 'A Ltd' }],
+      templates: [{ Stage: 1, Name: 'T', Subject: subject, Body: body, Active: 'Y' }]
+    });
+    const idx = env.call('buildProspectIndex_');
+    const res = env.call('evaluateQueue_', 1, env.call('activeTemplate_', 1), idx);
+    env.call('sendBatch_', res.eligible, 1, 'TEST');
+    return env;
+  }
+
+  // --- end to end: astral + BMP emoji survive subject, body AND signature --
+  {
+    const env = sendOne('Quick one ' + ASTRAL + ' about {{Company}}',
+      'Hi {{FirstName}},\n\n' + BMP + ' see you soon.', '<p>Sig ' + ASTRAL + '</p>');
+    const m = env.sent[0];
+    ok(m.subject.indexOf(ASTRAL) !== -1, 'astral-plane emoji survive in the decoded subject', m.subject);
+    ok(m.text.indexOf(BMP) !== -1, 'BMP emoji survive in the decoded plain-text body');
+    ok(m.html.indexOf(ASTRAL) !== -1, 'astral-plane emoji survive in the decoded HTML signature');
+    ok(!/�/.test(m.subject + m.html + m.text),
+       'no Unicode replacement characters anywhere in the decoded message');
+  }
+
+  // --- direct unit tests on the header encoder ------------------------------
+  // (full-pipeline subjects all carry the TEST-mode "[TEST → email] " prefix,
+  // which itself contains a non-ASCII arrow; testing the encoder directly
+  // keeps these cases exact and byte-boundary-precise.)
+
+  // a pure-ASCII subject is sent as plain text, no RFC 2047 wrapper at all
+  {
+    const env = fresh({});
+    const encoded = env.call('encodeHeaderText_', 'Quick question about A Ltd');
+    eq(encoded, 'Quick question about A Ltd', 'an ASCII-only subject is not wastefully RFC 2047-encoded');
+  }
+
+  // non-ASCII, non-emoji text (accented letters, currency) round-trips exactly
+  {
+    const env = fresh({});
+    const subject = 'Café pricing — £500 quote'; // Café pricing — £500 quote
+    const encoded = env.call('encodeHeaderText_', subject);
+    ok(encoded.indexOf('=?UTF-8?B?') === 0, 'non-ASCII, non-emoji text is still RFC 2047-encoded');
+    eq(decodeRfc2047_(encoded), subject, 'accented letters and currency symbols round-trip exactly');
+  }
+
+  // a long non-ASCII subject folds into multiple encoded words
+  {
+    const env = fresh({});
+    const longSubject = 'Following up ' + ASTRAL.repeat(6) + ' about your enquiry';
+    const encoded = env.call('encodeHeaderText_', longSubject);
+    eq(decodeRfc2047_(encoded), longSubject, 'a folded subject decodes back to the exact original');
+    const wordCount = (encoded.match(/=\?UTF-8\?B\?/g) || []).length;
+    ok(wordCount > 1, 'a long non-ASCII subject is split into more than one encoded word', 'words: ' + wordCount);
+    ok(encoded.indexOf('\r\n ') !== -1, 'the encoded words are folded with CRLF + space, not left on one line');
+    ok(encoded.split('\r\n').every(function (line) { return line.length <= 76; }),
+       'no folded subject line exceeds 76 characters');
+  }
+
+  // a 45-byte chunk boundary landing right next to an emoji doesn't split it
+  {
+    const env = fresh({});
+    const padding = 'x'.repeat(44); // one byte short of the 45-byte chunk cap
+    [ASTRAL.slice(0, 2), BMP.slice(0, 1)].forEach(function (emoji, i) {
+      const subject = padding + emoji + 'END' + i;
+      const encoded = env.call('encodeHeaderText_', subject);
+      eq(decodeRfc2047_(encoded), subject,
+         'a chunk boundary adjacent to an emoji (case ' + i + ') does not corrupt it');
+    });
+  }
+
+  // --- Thread ID / Message ID still wired through on a LIVE send -----------
+  {
+    const env = fresh({
+      engine: { MODE: 'LIVE' },
+      prospects: [{ 'Prospect ID': 'P-00001', 'First Name': 'Ann', Email: 'ann@example.com', Company: 'A Ltd' }],
+      queue: [{ 'Prospect ID': 'P-00001', 'Send?': 'Y', Email: 'ann@example.com', 'First Name': 'Ann', Company: 'A Ltd' }]
+    });
+    const idx = env.call('buildProspectIndex_');
+    const res = env.call('evaluateQueue_', 1, env.call('activeTemplate_', 1), idx);
+    env.call('sendBatch_', res.eligible, 1, 'LIVE');
+    const qrow = readBack(env, 'Send Queue')[0];
+    const prow = readBack(env, 'Prospects')[0];
+    ok(/^thread-/.test(qrow['Thread ID']), 'Send Queue Thread ID comes from the Gmail API response');
+    ok(/^msg-/.test(qrow['Message ID']), 'Send Queue Message ID comes from the Gmail API response');
+    eq(prow['Thread ID'], qrow['Thread ID'], 'Prospects Thread ID matches the Queue row on a LIVE send');
+    eq(prow['Last Message ID'], qrow['Message ID'], 'Prospects Last Message ID matches the Queue row on a LIVE send');
+  }
+
+  // --- still exactly one send path -------------------------------------------
+  {
+    const libFiles = fs.readdirSync(path.join(ROOT, 'library')).filter(function (f) { return f.endsWith('.js'); });
+    const allLib = libFiles.map(function (f) {
+      return fs.readFileSync(path.join(ROOT, 'library', f), 'utf8');
+    }).join('\n');
+    // Comments are allowed to name GmailApp when explaining why the code moved
+    // away from it (several do, per the "comment every deviation" convention)
+    // — strip comments first so this checks for an actual call, not the word.
+    const allLibNoComments = allLib.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    ok(!/\bGmailApp\s*\./.test(allLibNoComments), 'no library file calls GmailApp any more');
+    eq((allLib.match(/Gmail\.Users\.Messages\.send\(/g) || []).length, 1,
+       'Gmail.Users.Messages.send is called from exactly one place in the library');
+    const sendSrc = fs.readFileSync(path.join(ROOT, 'library', '08 send.js'), 'utf8');
+    ok(sendSrc.indexOf('sendRawMime_(') !== -1 && sendSrc.indexOf('function sendRawMime_(') !== -1,
+       'sendRawMime_ is defined and called from 08_Send.gs, the single send choke point file');
+  }
+}
 
 console.log('\n' + '═'.repeat(64));
 console.log(fail === 0 ? `ALL ${pass} ASSERTIONS PASSED` : `${pass} passed, ${fail} FAILED`);

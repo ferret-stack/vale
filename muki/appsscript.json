@@ -8,6 +8,13 @@
         "version": "1",
         "developmentMode": false
       }
+    ],
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Gmail",
+        "serviceId": "gmail",
+        "version": "v1"
+      }
     ]
   },
   "exceptionLogging": "STACKDRIVER",
